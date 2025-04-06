@@ -1,25 +1,26 @@
-version: "3"
-
 services:
   # Servicio de Chrome sin cabeza (Browserless)
-  chrome:
-    image: browserless/chrome:latest
-    restart: unless-stopped
-    ports:
-      - "3002:3000" # Puerto para depuración/monitoreo (opcional)
-    environment:
-      # Configuración de Browserless
-      - MAX_CONCURRENT_SESSIONS=10
-      - CONNECTION_TIMEOUT=300000
-      - MAX_QUEUE_LENGTH=20
-      - PREBOOT_CHROME=true
-      - ENABLE_DEBUGGER=false
-      - WORKSPACE_DELETE_EXPIRED=true
-      - WORKSPACE_EXPIRE_DAYS=7
-      - ENABLE_CORS=true
-    # Browserless ya incluye su propio SYS_ADMIN y configuración para Chrome
-    shm_size: 2gb # Memoria compartida para Chrome
-    mem_limit: 4g # Límite de memoria
+chrome:
+  image: browserless/chrome:latest
+  restart: unless-stopped
+  ports:
+    - "3002:3000" # Puerto para acceder a la interfaz de depuración
+  environment:
+    # Configuración de Browserless
+    - MAX_CONCURRENT_SESSIONS=10
+    - CONNECTION_TIMEOUT=300000
+    - MAX_QUEUE_LENGTH=20
+    - PREBOOT_CHROME=true
+    - ENABLE_DEBUGGER=true # Cambiado a true para habilitar el depurador
+    - WORKSPACE_DELETE_EXPIRED=true
+    - WORKSPACE_EXPIRE_DAYS=7
+    - ENABLE_CORS=true
+    - DEBUG=browserless*,puppeteer:* # Añadido para habilitar logs de depuración detallados
+    - FUNCTION_ENABLE_INCOGNITO_MODE=true # Opcional: permite sesiones de incógnito
+    - TOKEN=S0G1V9NnysIfNo6b4594f2f03360c5cb9faececf54 # Puedes añadir un token para seguridad si lo deseas
+  # Browserless ya incluye su propio SYS_ADMIN y configuración para Chrome
+  shm_size: 2gb # Memoria compartida para Chrome
+  mem_limit: 4g # Límite de memoria
 
   # Servicio de scraper
   scraper:
