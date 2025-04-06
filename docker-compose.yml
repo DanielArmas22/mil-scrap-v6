@@ -9,21 +9,27 @@ services:
       - "3002:3000" # Puerto para la interfaz de administración
     environment:
       # Configuración de Browserless
-      - MAX_CONCURRENT_SESSIONS=10
+      - MAX_CONCURRENT_SESSIONS=5
       - CONNECTION_TIMEOUT=300000
-      - MAX_QUEUE_LENGTH=20
+      - MAX_QUEUE_LENGTH=10
       - PREBOOT_CHROME=true
       - ENABLE_CORS=true
-      - ENABLE_DEBUGGER=true # Habilitar depurador
-      - ENABLE_ROUTES=true # Asegurar que todas las rutas estén habilitadas
-      - DEFAULT_BLOCK_ADS=false # Permitir anuncios para simular navegador normal
-      - DEFAULT_STEALTH=true # Activar modo sigiloso
-      - DEFAULT_HEADLESS=new # Usar nuevo modo headless
-      - DEFAULT_USER_DATA_DIR=/tmp/browserless-data-dir
-    shm_size: 2gb # Memoria compartida para Chrome
-    mem_limit: 4g # Límite de memoria para evitar OOM
-    volumes:
-      - ./chrome_data:/tmp/browserless-data-dir
+      - ENABLE_ROUTES=true
+      - ENABLE_XVFB=true
+      - CHROME_REFRESH_TIME=600000
+      - DEFAULT_BLOCK_ADS=false
+      - DEFAULT_HEADLESS=true
+      - FUNCTION_ENABLE_INCOGNITO_MODE=true
+      # Desactivar user data dir compartido para evitar errores de permisos
+      - DEFAULT_USER_DATA_DIR=
+      - WORKSPACE_DELETE_EXPIRED=true
+      - WORKSPACE_EXPIRE_DAYS=1
+    # Dar más recursos
+    shm_size: 1gb
+    mem_limit: 2g
+    # Usar red compartida para facilitar la comunicación
+    networks:
+      - scraper-net
 
   # Servicio de scraper
   scraper:
@@ -32,13 +38,23 @@ services:
       - "3001:3000" # Expone la API en el puerto 3001
     environment:
       - PORT=3000 # Puerto interno donde escucha tu aplicación
-      # URL de Browserless para conectarse
+      # URL de Browserless usando el nombre de servicio
       - BROWSERLESS_URL=ws://chrome:3000
-      # - NODE_ENV=production
+      - NODE_ENV=production
+      # Para depuración
+      - DEBUG=puppeteer:*
     restart: unless-stopped
+    # Esperar a que chrome inicie primero
     depends_on:
       - chrome
     volumes:
       - ./:/app # Monta el directorio raíz del proyecto
       - /app/node_modules # Evita que node_modules local sobrescriba
       - ./logs:/app/logs # Directorio para logs y capturas de pantalla
+    networks:
+      - scraper-net
+
+# Definir red compartida
+networks:
+  scraper-net:
+    driver: bridge
