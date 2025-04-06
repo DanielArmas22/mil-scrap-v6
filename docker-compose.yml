@@ -1,18 +1,40 @@
+version: "3"
+
 services:
+  # Servicio de Chrome sin cabeza (Browserless)
+  chrome:
+    image: browserless/chrome:latest
+    restart: unless-stopped
+    ports:
+      - "3002:3000" # Puerto para depuración/monitoreo (opcional)
+    environment:
+      # Configuración de Browserless
+      - MAX_CONCURRENT_SESSIONS=10
+      - CONNECTION_TIMEOUT=300000
+      - MAX_QUEUE_LENGTH=20
+      - PREBOOT_CHROME=true
+      - ENABLE_DEBUGGER=false
+      - WORKSPACE_DELETE_EXPIRED=true
+      - WORKSPACE_EXPIRE_DAYS=7
+      - ENABLE_CORS=true
+    # Browserless ya incluye su propio SYS_ADMIN y configuración para Chrome
+    shm_size: 2gb # Memoria compartida para Chrome
+    mem_limit: 4g # Límite de memoria
+
+  # Servicio de scraper
   scraper:
     build: .
     ports:
-      - "3001:3000" #
+      - "3001:3000" # Expone la API en el puerto 3001
     environment:
-      - PORT=3000 # Puerto en el que la aplicación escuchará
-      # Para depuración, cambiar a 'true' si necesitas ver el navegador
-      - HEADLESS=true
+      - PORT=3000 # Puerto interno donde escucha tu aplicación
+      # URL de Browserless para conectarse (nombre del servicio + puerto interno)
+      - BROWSERLESS_URL=ws://chrome:3000
     restart: unless-stopped
-    # Necesario para ejecutar Chrome en Docker
-    cap_add:
-      - SYS_ADMIN
-    # Opcional: montar volumen para persistir datos o logs
+    # Esto permite a ambos contenedores encontrarse en la misma red
+    depends_on:
+      - chrome
     volumes:
-      - ./:/app # Monta el directorio raíz del proyecto al directorio /app del contenedor
-      - /app/node_modules # Evita que node_modules local sobrescriba el del contenedor
-      - ./logs:/app/logs
+      - ./:/app # Monta el directorio raíz del proyecto
+      - /app/node_modules # Evita que node_modules local sobrescriba
+      - ./logs:/app/logs # Para logs

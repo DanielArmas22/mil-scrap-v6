@@ -346,44 +346,24 @@ async function scrapeMilanuncios(searchParams = {}) {
         console.log(`\n=== Intento ${attempt} de ${maxRetries} ===\n`);
       }
 
-      // Configuración mejorada para Docker
-      const launchOptions = {
-        headless: process.env.HEADLESS || true, // Por defecto true a menos que se especifique
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-gpu',
-          '--disable-dev-shm-usage',
-          '--disable-accelerated-2d-canvas',
-          '--no-first-run',
-          '--no-zygote',
-          '--disable-features=IsolateOrigins,site-per-process,SitePerProcess',
-          '--disable-site-isolation-trials',
-          '--disable-web-security',
-          '--disable-features=BlockInsecurePrivateNetworkRequests',
-          '--window-size=1920,1080',
-          '--disable-setuid-sandbox',
-          '--disable-infobars',
-          '--single-process', // Importante para entornos Docker
-          '--disable-extensions'
-        ],
-        ignoreHTTPSErrors: true,
-        defaultViewport: null
-      };
+      // URL de Browserless desde variable de entorno o usar localhost por defecto
+      const browserWSEndpoint = process.env.BROWSERLESS_URL || 'ws://chrome:3000';
+      console.log(`Conectando a Browserless en: ${browserWSEndpoint}`);
 
-      console.log('Lanzando navegador...');
-      browser = await puppeteer.launch(launchOptions);
+      // Conectar a la instancia de Browserless en lugar de iniciar Chrome localmente
+      browser = await puppeteer.connect({
+        browserWSEndpoint,
+        defaultViewport: {
+          width: 1920,
+          height: 1080
+        }
+      });
 
-      // Crear página directamente
+      // Crear una nueva página
       const page = await browser.newPage();
 
-      // Configurar tiempos de espera más altos
-      page.setDefaultNavigationTimeout(60000);
-      page.setDefaultTimeout(30000);
-
       // Configurar user agent aleatorio
-      const userAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+      const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
       console.log(`Usando User-Agent: ${userAgent}`);
       await page.setUserAgent(userAgent);
 
@@ -395,39 +375,6 @@ async function scrapeMilanuncios(searchParams = {}) {
         'Pragma': 'no-cache'
       });
 
-      // Establecer cookies iniciales (ayuda a evitar algunas detecciones)
-      await page.setCookie({
-        name: 'visited_before',
-        value: 'true',
-        domain: '.milanuncios.com',
-        path: '/',
-        expires: Math.floor(Date.now() / 1000) + 86400
-      });
-
-      // Configurar interceptación de peticiones para bloquear recursos innecesarios
-      await page.setRequestInterception(true);
-
-      page.on('request', (request) => {
-        const url = request.url();
-        const resourceType = request.resourceType();
-
-        // Bloquear recursos que no son necesarios para la extracción
-        if (
-          (resourceType === 'image' && !url.includes('milanuncios.com')) ||
-          resourceType === 'media' ||
-          url.includes('google-analytics') ||
-          url.includes('facebook.net') ||
-          url.includes('doubleclick.net') ||
-          url.includes('amazon-adsystem') ||
-          url.includes('/ads/') ||
-          url.includes('analytics') ||
-          url.includes('tracker')
-        ) {
-          request.abort();
-        } else {
-          request.continue();
-        }
-      });
       // Navegar a la página con tiempos de carga extendidos
       console.log('Navegando a la URL...');
 
@@ -443,7 +390,6 @@ async function scrapeMilanuncios(searchParams = {}) {
 
       // Esperar un tiempo antes de continuar
       await sleep(2000);
-
 
       // Contar elementos antes del scroll
       console.log('Contando elementos antes del scroll:');
@@ -464,43 +410,25 @@ async function scrapeMilanuncios(searchParams = {}) {
       // Extraer los datos de manera exhaustiva
       const scrapedData = await extractData(page);
 
-      // Verificar si hubo error en la extracción
-      if (scrapedData && scrapedData.error) {
-        console.log(`Error en la extracción: ${scrapedData.error}`);
+      // Cerrar la página
+      await page.close();
 
-        // Si estamos en el último intento, devolver lo que tengamos
-        if (attempt === maxRetries) {
-          console.log('Se alcanzó el número máximo de intentos.');
-          await browser.close();
-          browser = null;
-          return {
-            error: scrapedData.error,
-            message: 'No se pudieron extraer datos después de múltiples intentos',
-            partial: true
-          };
-        }
-
-        // Si no es el último intento, cerrar y reintentar
-        console.log('Preparando para reintentar...');
-        await browser.close();
-        browser = null;
-        continue;
-      }
-
-      // Si llegamos aquí, la extracción fue exitosa
-      console.log(`Extracción completada. Se extrajeron ${Array.isArray(scrapedData) ? scrapedData.length : 0} artículos.`);
-
-      // Cerrar navegador y devolver datos
-      await browser.close();
+      // Desconectar del navegador (no lo cerramos, solo desconectamos)
+      await browser.disconnect();
       browser = null;
+
       return Array.isArray(scrapedData) ? scrapedData : [];
 
     } catch (error) {
       console.error(`Error en scraping (intento ${attempt + 1}/${maxRetries + 1}):`, error.message);
 
-      // Cerrar el navegador si sigue abierto
+      // Desconectar del navegador si sigue conectado
       if (browser) {
-        await browser.close();
+        try {
+          await browser.disconnect();
+        } catch (disconnectError) {
+          console.error('Error al desconectar del navegador:', disconnectError.message);
+        }
         browser = null;
       }
 
