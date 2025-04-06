@@ -1,5 +1,3 @@
-version: "3"
-
 services:
   # Servicio de Chrome sin cabeza (Browserless)
   chrome:
