@@ -363,7 +363,7 @@ async function scrapeMilanuncios(searchParams = {}) {
       const page = await browser.newPage();
 
       // Configurar user agent aleatorio
-      const userAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+      const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36';
       console.log(`Usando User-Agent: ${userAgent}`);
       await page.setUserAgent(userAgent);
 
