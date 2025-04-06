@@ -34,7 +34,7 @@ services:
       - PORT=3000 # Puerto interno donde escucha tu aplicación
       # URL de Browserless para conectarse
       - BROWSERLESS_URL=ws://chrome:3000
-      - NODE_ENV=production
+      # - NODE_ENV=production
     restart: unless-stopped
     depends_on:
       - chrome
