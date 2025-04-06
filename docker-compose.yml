@@ -1,23 +1,29 @@
+version: "3"
+
 services:
   # Servicio de Chrome sin cabeza (Browserless)
   chrome:
     image: browserless/chrome:latest
     restart: unless-stopped
     ports:
-      - "3002:3000" # Puerto para depuración/monitoreo (opcional)
+      - "3002:3000" # Puerto para la interfaz de administración
     environment:
       # Configuración de Browserless
       - MAX_CONCURRENT_SESSIONS=10
       - CONNECTION_TIMEOUT=300000
       - MAX_QUEUE_LENGTH=20
       - PREBOOT_CHROME=true
-      - ENABLE_DEBUGGER=false
-      - WORKSPACE_DELETE_EXPIRED=true
-      - WORKSPACE_EXPIRE_DAYS=7
       - ENABLE_CORS=true
-    # Browserless ya incluye su propio SYS_ADMIN y configuración para Chrome
+      - ENABLE_DEBUGGER=true # Habilitar depurador
+      - ENABLE_ROUTES=true # Asegurar que todas las rutas estén habilitadas
+      - DEFAULT_BLOCK_ADS=false # Permitir anuncios para simular navegador normal
+      - DEFAULT_STEALTH=true # Activar modo sigiloso
+      - DEFAULT_HEADLESS=new # Usar nuevo modo headless
+      - DEFAULT_USER_DATA_DIR=/tmp/browserless-data-dir
     shm_size: 2gb # Memoria compartida para Chrome
-    mem_limit: 4g # Límite de memoria
+    mem_limit: 4g # Límite de memoria para evitar OOM
+    volumes:
+      - ./chrome_data:/tmp/browserless-data-dir
 
   # Servicio de scraper
   scraper:
@@ -26,13 +32,13 @@ services:
       - "3001:3000" # Expone la API en el puerto 3001
     environment:
       - PORT=3000 # Puerto interno donde escucha tu aplicación
-      # URL de Browserless para conectarse (nombre del servicio + puerto interno)
+      # URL de Browserless para conectarse
       - BROWSERLESS_URL=ws://chrome:3000
+      - NODE_ENV=production
     restart: unless-stopped
-    # Esto permite a ambos contenedores encontrarse en la misma red
     depends_on:
       - chrome
     volumes:
       - ./:/app # Monta el directorio raíz del proyecto
       - /app/node_modules # Evita que node_modules local sobrescriba
-      - ./logs:/app/logs # Para logs
+      - ./logs:/app/logs # Directorio para logs y capturas de pantalla
