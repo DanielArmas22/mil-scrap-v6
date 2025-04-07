@@ -2,6 +2,8 @@
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
+const proxyManager = require('./proxy-manager');
+
 // Función de delay con variación para parecer más humano
 function sleep(ms) {
   const jitter = Math.floor(Math.random() * 100);
@@ -338,176 +340,206 @@ async function scrapeMilanuncios(searchParams = {}) {
   console.log(`Scraping URL: ${urlToScrape}`);
 
   let browser = null;
+  let page = null;
   let maxRetries = 2;
+  const sessionId = `MilAnuncios-Scraper-${Date.now()}`; // ID único para la sesión
 
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      if (attempt > 0) {
-        console.log(`\n=== Intento ${attempt} de ${maxRetries} ===\n`);
+  try {
+    // Conectar a la instancia de Browserless (una sola vez)
+    const browserWSEndpoint = process.env.BROWSERLESS_URL || 'ws://chrome:3000';
+    console.log(`Conectando a Browserless en: ${browserWSEndpoint}`);
+    console.log(`ID de sesión: ${sessionId}`);
+
+    // Conectamos a Browserless
+    browser = await puppeteer.connect({
+      browserWSEndpoint,
+      defaultViewport: {
+        width: 1920,
+        height: 1080
       }
+    });
 
-      // URL de Browserless desde variable de entorno o usar localhost por defecto
-      const browserWSEndpoint = process.env.BROWSERLESS_URL || 'ws://chrome:3000';
-      console.log(`Conectando a Browserless en: ${browserWSEndpoint}`);
+    // Crear una nueva página
+    page = await browser.newPage();
 
-      // Conectar a la instancia de Browserless en lugar de iniciar Chrome localmente
-      browser = await puppeteer.connect({
-        browserWSEndpoint,
-        defaultViewport: {
-          width: 1920,
-          height: 1080
-        },
-        // Nombre de sesión para identificar fácilmente en la interfaz de depuración
-        args: [`--window-name="MilAnuncios-Scraper-${Date.now()}"`]
+    // Si está habilitado el uso de proxies
+    if (process.env.USE_PROXIES === 'true') {
+      // Aplicar proxy a la página mediante autenticación
+      const proxy = proxyManager.getRandomProxy();
+      console.log(`Usando proxy: ${proxy.host}:${proxy.port}`);
+      await page.authenticate({
+        username: proxy.username,
+        password: proxy.password
       });
-
-      // Crear una nueva página
-      const page = await browser.newPage();
-
-      // Configurar tiempos de espera más altos
-      page.setDefaultNavigationTimeout(60000);
-      page.setDefaultTimeout(30000);
-
-      // Configurar user agent - usamos un iPhone para evitar bloqueos
-      const userAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
-      console.log(`Usando User-Agent: ${userAgent}`);
-      await page.setUserAgent(userAgent);
-
-      // Configurar cabeceras HTTP adicionales
-      await page.setExtraHTTPHeaders({
-        'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache'
-      });
-
-      // Establecer cookies iniciales para evitar algunas detecciones
-      await page.setCookie({
-        name: 'visited_before',
-        value: 'true',
-        domain: '.milanuncios.com',
-        path: '/',
-        expires: Math.floor(Date.now() / 1000) + 86400
-      });
-
-      // Configurar interceptación de peticiones para bloquear recursos innecesarios
-      await page.setRequestInterception(true);
-
-      page.on('request', (request) => {
-        const url = request.url();
-        const resourceType = request.resourceType();
-
-        // Bloquear recursos que no son necesarios para la extracción
-        if (
-          (resourceType === 'image' && !url.includes('milanuncios.com')) ||
-          resourceType === 'media' ||
-          url.includes('google-analytics') ||
-          url.includes('facebook.net') ||
-          url.includes('doubleclick.net') ||
-          url.includes('amazon-adsystem') ||
-          url.includes('/ads/') ||
-          url.includes('analytics') ||
-          url.includes('tracker')
-        ) {
-          request.abort();
-        } else {
-          request.continue();
-        }
-      });
-
-      // Navegar a la página con tiempos de carga extendidos
-      console.log('Navegando a la URL...');
-
-      await page.goto(urlToScrape, {
-        waitUntil: 'networkidle2',
-        timeout: 60000
-      });
-
-      console.log('Página cargada.');
-
-      // Manejar cookies
-      await handleCookiesConsent(page);
-
-      // Esperar un tiempo antes de continuar
-      await sleep(2000);
-
-      // Contar elementos antes del scroll
-      console.log('Contando elementos antes del scroll:');
-      const initialCount = await countVisibleElements(page);
-
-      // Realizar auto-scroll exhaustivo para cargar TODOS los elementos
-      await exhaustiveScroll(page);
-
-      // Contar elementos después del scroll
-      console.log('Contando elementos después del scroll:');
-      const finalCount = await countVisibleElements(page);
-
-      console.log(`Incremento de elementos: ${finalCount - initialCount} (${initialCount} -> ${finalCount})`);
-
-      // Esperar un poco después del auto-scroll
-      await sleep(3000);
-
-      // Extraer los datos de manera exhaustiva
-      const scrapedData = await extractData(page);
-
-      // Verificar si hubo error en la extracción
-      if (scrapedData && scrapedData.error) {
-        console.log(`Error en la extracción: ${scrapedData.error}`);
-
-        // Si estamos en el último intento, devolver lo que tengamos
-        if (attempt === maxRetries) {
-          console.log('Se alcanzó el número máximo de intentos.');
-          await page.close();
-          await browser.disconnect();
-          browser = null;
-          return {
-            error: scrapedData.error,
-            message: 'No se pudieron extraer datos después de múltiples intentos',
-            partial: true
-          };
-        }
-
-        // Si no es el último intento, cerrar y reintentar
-        console.log('Preparando para reintentar...');
-        await page.close();
-        await browser.disconnect();
-        browser = null;
-        continue;
-      }
-
-      // Si llegamos aquí, la extracción fue exitosa
-      console.log(`Extracción completada. Se extrajeron ${Array.isArray(scrapedData) ? scrapedData.length : 0} artículos.`);
-
-      // Cerrar página y desconectar del navegador
-      await page.close();
-      await browser.disconnect();
-      browser = null;
-
-      return Array.isArray(scrapedData) ? scrapedData : [];
-
-    } catch (error) {
-      console.error(`Error en scraping (intento ${attempt + 1}/${maxRetries + 1}):`, error.message);
-
-      // Desconectar del navegador si sigue conectado
-      if (browser) {
-        try {
-          await browser.disconnect();
-        } catch (disconnectError) {
-          console.error('Error al desconectar del navegador:', disconnectError.message);
-        }
-        browser = null;
-      }
-
-      // Si es el último intento, lanzar el error
-      if (attempt === maxRetries) {
-        throw new Error(`Error después de ${maxRetries + 1} intentos: ${error.message}`);
-      }
-
-      // Esperar antes de reintentar
-      const retryDelay = (attempt + 1) * 5000; // Incrementar tiempo entre reintentos
-      console.log(`Esperando ${retryDelay / 1000} segundos antes de reintentar...`);
-      await sleep(retryDelay);
     }
+
+    // Identificar mejor la sesión para la interfaz de debugging
+    await page.evaluate((sid) => {
+      document.title = `Scraping: ${sid}`;
+      // Intentar hacer más visible la sesión
+      if (window.localStorage) {
+        window.localStorage.setItem('browserless_session_id', sid);
+      }
+    }, sessionId);
+
+    // Configurar tiempos de espera más altos
+    page.setDefaultNavigationTimeout(120000);
+    page.setDefaultTimeout(60000);
+
+    // Configurar user agent - usamos un iPhone para evitar bloqueos
+    const userAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+    console.log(`Usando User-Agent: ${userAgent}`);
+    await page.setUserAgent(userAgent);
+
+    // Configurar cabeceras HTTP adicionales
+    await page.setExtraHTTPHeaders({
+      'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+      'Cache-Control': 'no-cache',
+      'Pragma': 'no-cache'
+    });
+
+    // Establecer cookies iniciales para evitar algunas detecciones
+    await page.setCookie({
+      name: 'visited_before',
+      value: 'true',
+      domain: '.milanuncios.com',
+      path: '/',
+      expires: Math.floor(Date.now() / 1000) + 86400
+    });
+
+    // Configurar interceptación de peticiones para bloquear recursos innecesarios
+    await page.setRequestInterception(true);
+
+    page.on('request', (request) => {
+      const url = request.url();
+      const resourceType = request.resourceType();
+
+      // Bloquear recursos que no son necesarios para la extracción
+      if (
+        (resourceType === 'image' && !url.includes('milanuncios.com')) ||
+        resourceType === 'media' ||
+        url.includes('google-analytics') ||
+        url.includes('facebook.net') ||
+        url.includes('doubleclick.net') ||
+        url.includes('amazon-adsystem') ||
+        url.includes('/ads/') ||
+        url.includes('analytics') ||
+        url.includes('tracker')
+      ) {
+        request.abort();
+      } else {
+        request.continue();
+      }
+    });
+
+    // Proceso de scraping con reintentos
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        if (attempt > 0) {
+          console.log(`\n=== Intento ${attempt} de ${maxRetries} (Manteniendo la misma sesión) ===\n`);
+
+          // Para cada reintento usar un proxy diferente si está habilitado
+          if (process.env.USE_PROXIES === 'true') {
+            const newProxy = proxyManager.getRandomProxy();
+            console.log(`Cambiando a proxy: ${newProxy.host}:${newProxy.port}`);
+
+            await page.authenticate({
+              username: newProxy.username,
+              password: newProxy.password
+            });
+          }
+
+          // Más tiempo de espera entre reintentos para observación
+          await sleep(8000);
+        }
+
+        // Navegar a la página con tiempos de carga extendidos
+        console.log('Navegando a la URL...');
+
+        await page.goto(urlToScrape, {
+          waitUntil: 'networkidle2',
+          timeout: 90000 // Tiempo extendido para carga inicial
+        });
+
+        console.log('Página cargada.');
+        // Tiempo de espera para observar la página cargada
+        await sleep(5000);
+
+        // Manejar cookies
+        await handleCookiesConsent(page);
+
+        // Esperar un tiempo antes de continuar
+        await sleep(4000);
+
+        // Contar elementos antes del scroll
+        console.log('Contando elementos antes del scroll:');
+        const initialCount = await countVisibleElements(page);
+
+        // Realizar auto-scroll exhaustivo para cargar TODOS los elementos
+        await exhaustiveScroll(page);
+
+        // Esperar más tiempo después del scroll para observación
+        await sleep(6000);
+
+        // Contar elementos después del scroll
+        console.log('Contando elementos después del scroll:');
+        const finalCount = await countVisibleElements(page);
+
+        console.log(`Incremento de elementos: ${finalCount - initialCount} (${initialCount} -> ${finalCount})`);
+
+        // Esperar un poco después del auto-scroll
+        await sleep(4000);
+
+        // Extraer los datos de manera exhaustiva
+        console.log('Iniciando extracción de datos...');
+        const scrapedData = await extractData(page);
+
+        // Verificar si hubo error en la extracción
+        if (scrapedData && scrapedData.error) {
+          console.log(`Error en la extracción: ${scrapedData.error}`);
+
+          // Si estamos en el último intento, devolver lo que tengamos
+          if (attempt === maxRetries) {
+            console.log('Se alcanzó el número máximo de intentos, pero mantenemos la sesión abierta para inspección.');
+            // NO cerramos la página ni el navegador aquí para mantener la sesión visible
+            return {
+              error: scrapedData.error,
+              message: 'No se pudieron extraer datos después de múltiples intentos',
+              partial: true
+            };
+          }
+
+          // Si no es el último intento, continuamos con el siguiente intento sin cerrar nada
+          console.log('Preparando para reintentar con la misma sesión pero diferente proxy...');
+          continue;
+        }
+
+        // Si llegamos aquí, la extracción fue exitosa
+        console.log(`Extracción completada. Se extrajeron ${Array.isArray(scrapedData) ? scrapedData.length : 0} artículos.`);
+        console.log('Manteniendo la sesión abierta para inspección...');
+
+        // NO cerramos la página ni el navegador para mantener la sesión visible
+        return Array.isArray(scrapedData) ? scrapedData : [];
+      } catch (attemptError) {
+        console.error(`Error en scraping (intento ${attempt + 1}/${maxRetries + 1}):`, attemptError.message);
+
+        // Si es el último intento, continuamos al manejador de error general
+        if (attempt === maxRetries) {
+          throw attemptError;
+        }
+
+        // Esperar antes de reintentar (tiempo aumentado para observación)
+        const retryDelay = (attempt + 1) * 8000;
+        console.log(`Esperando ${retryDelay / 1000} segundos antes de reintentar con la misma sesión...`);
+        await sleep(retryDelay);
+      }
+    }
+  } catch (error) {
+    console.error(`Error general en scraping:`, error.message);
+    // Mantenemos la sesión abierta incluso en caso de error
+    console.log('Error en el proceso, pero manteniendo la sesión abierta para inspección...');
+    return { error: error.message, sessionKept: true };
   }
 }
 

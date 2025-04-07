@@ -10,12 +10,13 @@ COPY package*.json ./
 # Instalar dependencias
 RUN npm install
 
-# Instalar dependencias adicionales (no necesitamos Chrome local)
-RUN npm install puppeteer-core puppeteer-extra puppeteer-extra-plugin-stealth axios
+# Instalar dependencias adicionales (incluyendo las necesarias para proxies)
+RUN npm install puppeteer-core puppeteer-extra puppeteer-extra-plugin-stealth axios https-proxy-agent
 
-# Copiar los archivos de la aplicación
+# Copiar los archivos de la aplicación (incluyendo el nuevo proxy-manager)
 COPY server.js ./
 COPY scrap.js ./
+COPY proxy-manager.js ./
 
 # Exponer el puerto que usa Express
 EXPOSE 3000
