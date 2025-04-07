@@ -24,7 +24,7 @@
     });
 
     // Construye la URL del endpoint del servidor
-    const url = `http://localhost:3000/scrape?${params.toString()}`;
+    const url = `http://localhost:3001/scrape?${params.toString()}`;
     console.log(`Probando endpoint: ${url}`);
 
     // Realiza la petición GET

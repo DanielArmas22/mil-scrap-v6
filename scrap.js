@@ -356,14 +356,20 @@ async function scrapeMilanuncios(searchParams = {}) {
         defaultViewport: {
           width: 1920,
           height: 1080
-        }
+        },
+        // Nombre de sesión para identificar fácilmente en la interfaz de depuración
+        args: [`--window-name="MilAnuncios-Scraper-${Date.now()}"`]
       });
 
       // Crear una nueva página
       const page = await browser.newPage();
 
-      // Configurar user agent aleatorio
-      const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36';
+      // Configurar tiempos de espera más altos
+      page.setDefaultNavigationTimeout(60000);
+      page.setDefaultTimeout(30000);
+
+      // Configurar user agent - usamos un iPhone para evitar bloqueos
+      const userAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
       console.log(`Usando User-Agent: ${userAgent}`);
       await page.setUserAgent(userAgent);
 
@@ -373,6 +379,40 @@ async function scrapeMilanuncios(searchParams = {}) {
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
         'Cache-Control': 'no-cache',
         'Pragma': 'no-cache'
+      });
+
+      // Establecer cookies iniciales para evitar algunas detecciones
+      await page.setCookie({
+        name: 'visited_before',
+        value: 'true',
+        domain: '.milanuncios.com',
+        path: '/',
+        expires: Math.floor(Date.now() / 1000) + 86400
+      });
+
+      // Configurar interceptación de peticiones para bloquear recursos innecesarios
+      await page.setRequestInterception(true);
+
+      page.on('request', (request) => {
+        const url = request.url();
+        const resourceType = request.resourceType();
+
+        // Bloquear recursos que no son necesarios para la extracción
+        if (
+          (resourceType === 'image' && !url.includes('milanuncios.com')) ||
+          resourceType === 'media' ||
+          url.includes('google-analytics') ||
+          url.includes('facebook.net') ||
+          url.includes('doubleclick.net') ||
+          url.includes('amazon-adsystem') ||
+          url.includes('/ads/') ||
+          url.includes('analytics') ||
+          url.includes('tracker')
+        ) {
+          request.abort();
+        } else {
+          request.continue();
+        }
       });
 
       // Navegar a la página con tiempos de carga extendidos
@@ -410,10 +450,36 @@ async function scrapeMilanuncios(searchParams = {}) {
       // Extraer los datos de manera exhaustiva
       const scrapedData = await extractData(page);
 
-      // Cerrar la página
-      await page.close();
+      // Verificar si hubo error en la extracción
+      if (scrapedData && scrapedData.error) {
+        console.log(`Error en la extracción: ${scrapedData.error}`);
 
-      // Desconectar del navegador (no lo cerramos, solo desconectamos)
+        // Si estamos en el último intento, devolver lo que tengamos
+        if (attempt === maxRetries) {
+          console.log('Se alcanzó el número máximo de intentos.');
+          await page.close();
+          await browser.disconnect();
+          browser = null;
+          return {
+            error: scrapedData.error,
+            message: 'No se pudieron extraer datos después de múltiples intentos',
+            partial: true
+          };
+        }
+
+        // Si no es el último intento, cerrar y reintentar
+        console.log('Preparando para reintentar...');
+        await page.close();
+        await browser.disconnect();
+        browser = null;
+        continue;
+      }
+
+      // Si llegamos aquí, la extracción fue exitosa
+      console.log(`Extracción completada. Se extrajeron ${Array.isArray(scrapedData) ? scrapedData.length : 0} artículos.`);
+
+      // Cerrar página y desconectar del navegador
+      await page.close();
       await browser.disconnect();
       browser = null;
 
