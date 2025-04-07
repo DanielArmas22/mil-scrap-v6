@@ -35,7 +35,7 @@ services:
       # URL de Browserless para conectarse (nombre del servicio + puerto interno)
       - BROWSERLESS_URL=ws://chrome:3000?token=S0G1V9NnysIfNo6b4594f2f03360c5cb9faececf54
       # Habilitar uso de proxies
-      - USE_PROXIES=true
+      - USE_PROXIES=false
     restart: unless-stopped
     # Esto permite a ambos contenedores encontrarse en la misma red
     depends_on:

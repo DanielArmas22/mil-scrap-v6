@@ -6,68 +6,205 @@ const proxyManager = require('./proxy-manager');
 
 // Función de delay con variación para parecer más humano
 function sleep(ms) {
-  const jitter = Math.floor(Math.random() * 100);
+  // Añadir variabilidad significativa para parecer más humano
+  const jitter = Math.floor(Math.random() * (ms * 0.3)); // Hasta 30% de variación
   return new Promise(resolve => setTimeout(resolve, ms + jitter));
 }
-// Auto-scroll exhaustivo para cargar todos los elementos
+async function humanClick(page, selector) {
+  try {
+    const element = await page.$(selector);
+    if (!element) {
+      console.log(`Elemento no encontrado: ${selector}`);
+      return false;
+    }
+
+    // Obtener posición y dimensiones del elemento
+    const box = await element.boundingBox();
+    if (!box) {
+      console.log(`No se pudo obtener el boundingBox para: ${selector}`);
+      return false;
+    }
+
+    // Calcular un punto aleatorio dentro del elemento
+    const x = box.x + (box.width * 0.3 + Math.random() * box.width * 0.4);
+    const y = box.y + (box.height * 0.3 + Math.random() * box.height * 0.4);
+
+    // Mover el cursor gradualmente (más natural)
+    await page.mouse.move(
+      x - 50 - Math.random() * 100,
+      y - 50 - Math.random() * 100,
+      { steps: 10 }
+    );
+    await sleep(100 + Math.random() * 150);
+
+    // Hacer un movimiento final al objetivo
+    await page.mouse.move(x, y, { steps: 5 });
+    await sleep(50 + Math.random() * 100);
+
+    // Hacer clic con delay variable
+    await page.mouse.down();
+    await sleep(50 + Math.random() * 100);
+    await page.mouse.up();
+
+    console.log(`Clic humano realizado en: ${selector}`);
+    return true;
+  } catch (error) {
+    console.error(`Error al realizar clic humano en ${selector}:`, error.message);
+    return false;
+  }
+}
+async function detectCaptcha(page) {
+  try {
+    // Lista de posibles selectores para diferentes captchas
+    const captchaSelectors = [
+      // Selectores de captcha comunes
+      { type: 'geetest', selector: '.geetest_canvas_img canvas', name: 'GeeTest Canvas' },
+      { type: 'geetest', selector: '.geetest_slider_button', name: 'GeeTest Slider' },
+      { type: 'geetest', selector: '.geetest_btn', name: 'GeeTest Button' },
+      { type: 'recaptcha', selector: '.recaptcha-checkbox', name: 'reCAPTCHA Checkbox' },
+      { type: 'recaptcha', selector: 'iframe[src*="recaptcha"]', name: 'reCAPTCHA iframe' },
+      { type: 'hcaptcha', selector: 'iframe[src*="hcaptcha"]', name: 'hCaptcha iframe' },
+      { type: 'milanuncios', selector: '.slider_verify', name: 'Milanuncios verify' },
+      { type: 'milanuncios', selector: '.verify-wrap', name: 'Milanuncios wrap' },
+      { type: 'milanuncios', selector: '[class*="verify"]', name: 'Any verify class' },
+      { type: 'milanuncios', selector: '[class*="slider"]', name: 'Any slider class' },
+      { type: 'generic', selector: '[class*="captcha"]', name: 'Generic Captcha Element' },
+      { type: 'generic', selector: '[id*="captcha"]', name: 'Generic Captcha ID' }
+    ];
+
+    // Detectar qué selectores están presentes
+    for (const item of captchaSelectors) {
+      const isPresent = await page.evaluate((selector) => {
+        return !!document.querySelector(selector);
+      }, item.selector).catch(() => false);
+
+      if (isPresent) {
+        console.log(`⚠️ Captcha detectado: ${item.name} (${item.selector})`);
+        return true;
+      }
+    }
+
+    // Verificar también por texto que indique captcha
+    const hasCaptchaText = await page.evaluate(() => {
+      const bodyText = document.body.innerText.toLowerCase();
+      return bodyText.includes('captcha') ||
+        bodyText.includes('robot') ||
+        bodyText.includes('verify') ||
+        bodyText.includes('verificar') ||
+        bodyText.includes('seguridad');
+    });
+
+    if (hasCaptchaText) {
+      console.log("⚠️ Texto de captcha detectado en la página");
+      return true;
+    }
+
+    console.log("No se detectó ningún captcha");
+    return false;
+  } catch (error) {
+    console.error("Error detectando captcha:", error.message);
+    return false;
+  }
+}
 async function exhaustiveScroll(page) {
-  console.log('Iniciando scroll exhaustivo para cargar todos los elementos...');
+  console.log('Iniciando scroll exhaustivo con comportamiento humano...');
 
   try {
-    // Primer enfoque: scroll simple hasta el final
+    // Primer enfoque: scroll variable con pausas aleatorias
     await page.evaluate(async () => {
       await new Promise((resolve) => {
         let totalHeight = 0;
-        const distance = 300;
-        let iterations = 0;
-        const maxIterations = 50; // Límite de seguridad
+        let scrolled = 0;
+        const scrolls = [];
 
-        const timer = setInterval(() => {
-          window.scrollBy(0, distance);
-          totalHeight += distance;
-          iterations++;
+        // Generar una serie de scrolls variables (como un humano)
+        for (let i = 0; i < 50; i++) {
+          // Los humanos hacen scrolls de diferentes longitudes
+          const baseDistance = 250 + Math.floor(Math.random() * 150);
+          // A veces hacemos scrolls más largos
+          const distance = Math.random() > 0.8
+            ? baseDistance * (1.5 + Math.random())
+            : baseDistance;
 
-          // Verificar si llegamos al final o alcanzamos el límite
-          if (window.innerHeight + window.scrollY >= document.body.scrollHeight || iterations >= maxIterations) {
-            clearInterval(timer);
+          scrolls.push({
+            distance,
+            // Los humanos hacen pausas variables entre scrolls
+            delay: 150 + Math.floor(Math.random() * 300)
+          });
+        }
+
+        // Ejecutar los scrolls con timing variable
+        const scrollInterval = setInterval(() => {
+          if (scrolled >= scrolls.length ||
+            window.innerHeight + window.scrollY >= document.body.scrollHeight) {
+            clearInterval(scrollInterval);
             resolve();
+            return;
+          }
+
+          const currentScroll = scrolls[scrolled];
+          window.scrollBy(0, currentScroll.distance);
+          totalHeight += currentScroll.distance;
+          scrolled++;
+
+          // A veces los humanos se detienen a leer
+          if (Math.random() > 0.85) {
+            clearInterval(scrollInterval);
+            setTimeout(() => {
+              // Y luego continúan scrolleando
+              scrollInterval = setInterval(scrollStep, 150 + Math.floor(Math.random() * 200));
+            }, 1000 + Math.floor(Math.random() * 1500)); // Pausa más larga
           }
         }, 200);
       });
     });
 
-    // Esperar a que se carguen elementos adicionales
-    await sleep(2000);
+    // Esperar a que se carguen elementos adicionales con tiempo variable
+    await sleep(2000 + Math.random() * 1000);
 
-    console.log('Realizando un segundo scroll para cargar elementos rezagados...');
+    console.log('Realizando un segundo scroll con pausas naturales...');
 
-    // Segundo enfoque: scroll más lento para asegurar que se carguen todos los elementos
+    // Segundo enfoque: scroll más humano desde arriba hacia abajo
     await page.evaluate(async () => {
       await new Promise((resolve) => {
-        // Primero, volver al principio
+        // Primero, volver al principio (los humanos a veces regresan arriba)
         window.scrollTo(0, 0);
 
         setTimeout(async () => {
           const height = document.body.scrollHeight;
-          const scrollStep = Math.floor(height / 20); // Dividir la altura en 20 pasos
+          // Dividir la altura en pasos variables (los humanos no hacen scrolls perfectamente regulares)
+          const totalSteps = 15 + Math.floor(Math.random() * 10);
 
-          // Scroll paso a paso con pausa entre cada paso
-          for (let i = 0; i < 20; i++) {
-            window.scrollBy(0, scrollStep);
-            await new Promise(r => setTimeout(r, 400)); // Esperar 400ms entre scrolls
+          // Realizar scroll con velocidad variable y pausas aleatorias
+          for (let i = 0; i < totalSteps; i++) {
+            // Un humano no divide la página en partes iguales
+            const scrollPercent = (i / totalSteps) * (0.9 + Math.random() * 0.2);
+            const targetPosition = height * scrollPercent;
+
+            // Scroll a la posición calculada
+            window.scrollTo(0, targetPosition);
+
+            // Pausa variable entre scrolls
+            const pause = 300 + Math.random() * 500;
+            if (Math.random() > 0.8) {
+              // A veces una pausa más larga para simular lectura
+              await new Promise(r => setTimeout(r, 1000 + Math.random() * 1500));
+            } else {
+              await new Promise(r => setTimeout(r, pause));
+            }
           }
 
-          // Scroll final al fondo
+          // Scroll final al fondo con una pequeña pausa
           window.scrollTo(0, height);
-          setTimeout(resolve, 1000);
-        }, 500);
+          setTimeout(resolve, 800 + Math.random() * 500);
+        }, 500 + Math.random() * 200);
       });
     });
 
     // Esperar para asegurar que la carga de AJAX termine
-    await sleep(2000);
+    await sleep(2000 + Math.random() * 1000);
 
-    // Tercer enfoque: click en "mostrar más" o botones de paginación si existen
+    // Tercer enfoque: click en "mostrar más" o botones de paginación con clics humanos
     try {
       const loadMoreSelectors = [
         'button[class*="more"]',
@@ -90,22 +227,16 @@ async function exhaustiveScroll(page) {
           console.log(`Encontrado botón "mostrar más" o paginación: ${selector}`);
 
           // Contar cuántos elementos tenemos antes de hacer clic
-          const countBefore = await page.evaluate((articleSelector) => {
-            return document.querySelectorAll(articleSelector).length;
-          }, 'article, [class*="AdCard"], [class*="result-item"]');
+          const countBefore = await countVisibleElements(page);
 
-          console.log(`Elementos antes de hacer clic: ${countBefore}`);
-
-          // Hacer clic en el botón
-          await page.click(selector);
-          await sleep(3000); // Esperar a que carguen más elementos
+          // Hacer clic de forma humana en el botón
+          await humanClick(page, selector);
+          await sleep(2500 + Math.random() * 1000); // Esperar a que carguen más elementos
 
           // Contar cuántos elementos tenemos después de hacer clic
-          const countAfter = await page.evaluate((articleSelector) => {
-            return document.querySelectorAll(articleSelector).length;
-          }, 'article, [class*="AdCard"], [class*="result-item"]');
+          const countAfter = await countVisibleElements(page);
 
-          console.log(`Elementos después de hacer clic: ${countAfter}`);
+          console.log(`Elementos: ${countBefore} → ${countAfter}`);
 
           // Si cargaron más elementos, seguir haciendo clic hasta que no aumenten
           if (countAfter > countBefore) {
@@ -121,14 +252,11 @@ async function exhaustiveScroll(page) {
               if (!stillHasButton) break;
 
               console.log('Haciendo clic para cargar más elementos...');
-              await page.click(selector).catch(() => { }); // Ignorar errores de clic
-              await sleep(3000);
+              await humanClick(page, selector);
+              await sleep(3000 + Math.random() * 1000);
 
               // Contar nuevamente
-              const newCount = await page.evaluate((articleSelector) => {
-                return document.querySelectorAll(articleSelector).length;
-              }, 'article, [class*="AdCard"], [class*="result-item"]');
-
+              const newCount = await countVisibleElements(page);
               console.log(`Elementos después del clic adicional: ${newCount}`);
 
               // Si no aumentaron, salir del bucle
@@ -215,18 +343,18 @@ async function handleCookiesConsent(page) {
       '[data-testid="cookie-policy-dialog-accept-button"]'
     ];
 
-    // Intentar cada selector
+    // Intentar cada selector con clics humanos
     for (const selector of cookieSelectors) {
       try {
-        const cookieButton = await page.$(selector);
-        if (cookieButton) {
+        const hasButton = await page.evaluate((sel) => {
+          return !!document.querySelector(sel);
+        }, selector);
+
+        if (hasButton) {
           console.log(`Encontrado botón de cookies: ${selector}`);
-
-          // Hacer clic con cierto retraso
-          await cookieButton.click({ delay: 100 });
+          await humanClick(page, selector);
           console.log('Cookies aceptadas.');
-
-          await sleep(1000);
+          await sleep(1000 + Math.random() * 500);
           return true;
         }
       } catch (e) {
@@ -237,14 +365,31 @@ async function handleCookiesConsent(page) {
     // Intento alternativo: buscar por texto
     try {
       const buttons = await page.$$('button');
-      for (const button of buttons) {
+      for (let i = 0; i < buttons.length; i++) {
+        const button = buttons[i];
         const text = await page.evaluate(el => el.innerText.toLowerCase(), button);
         if (text.includes('accept') || text.includes('acepto') || text.includes('aceptar')) {
           console.log(`Encontrado botón por texto: "${text}"`);
-          await button.click({ delay: 100 });
-          console.log('Cookies aceptadas por texto.');
-          await sleep(1000);
-          return true;
+
+          // Obtener las coordenadas del botón
+          const box = await button.boundingBox();
+          if (box) {
+            // Clic humano en el botón
+            const x = box.x + box.width / 2 + (Math.random() * 10 - 5);
+            const y = box.y + box.height / 2 + (Math.random() * 10 - 5);
+
+            await page.mouse.move(x - 20 - Math.random() * 30, y - 10 - Math.random() * 20);
+            await sleep(100 + Math.random() * 150);
+            await page.mouse.move(x, y, { steps: 5 });
+            await sleep(50 + Math.random() * 100);
+            await page.mouse.down();
+            await sleep(50 + Math.random() * 70);
+            await page.mouse.up();
+
+            console.log('Cookies aceptadas por texto.');
+            await sleep(1000 + Math.random() * 500);
+            return true;
+          }
         }
       }
     } catch (e) {
@@ -341,7 +486,7 @@ async function scrapeMilanuncios(searchParams = {}) {
 
   let browser = null;
   let page = null;
-  let maxRetries = 2;
+  let maxRetries = 3; // Aumentar los reintentos para mayor robustez
   const sessionId = `MilAnuncios-Scraper-${Date.now()}`; // ID único para la sesión
 
   try {
@@ -374,24 +519,29 @@ async function scrapeMilanuncios(searchParams = {}) {
     }
 
     // Identificar mejor la sesión para la interfaz de debugging
-    await page.evaluate((sid) => {
-      document.title = `Scraping: ${sid}`;
-      // Intentar hacer más visible la sesión
-      if (window.localStorage) {
-        window.localStorage.setItem('browserless_session_id', sid);
-      }
-    }, sessionId);
+    // await page.evaluate((sid) => {
+    //   document.title = `Scraping: ${sid}`;
+    //   if (window.localStorage) {
+    //     window.localStorage.setItem('browserless_session_id', sid);
+    //   }
+    // }, sessionId);
 
     // Configurar tiempos de espera más altos
     page.setDefaultNavigationTimeout(120000);
     page.setDefaultTimeout(60000);
 
-    // Configurar user agent - usamos un iPhone para evitar bloqueos
-    const userAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+    // Configurar user agent con variabilidad
+    const mobileAgents = [
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/119.0.6045.109 Mobile/15E148 Safari/604.1',
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1'
+    ];
+
+    const userAgent = mobileAgents[Math.floor(Math.random() * mobileAgents.length)];
     console.log(`Usando User-Agent: ${userAgent}`);
     await page.setUserAgent(userAgent);
 
-    // Configurar cabeceras HTTP adicionales
+    // Configurar cabeceras HTTP adicionales con variabilidad
     await page.setExtraHTTPHeaders({
       'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
@@ -466,18 +616,33 @@ async function scrapeMilanuncios(searchParams = {}) {
         // Tiempo de espera para observar la página cargada
         await sleep(5000);
 
-        // Manejar cookies
+        // Verificar si hay captcha antes de continuar
+        const hasCaptcha = await detectCaptcha(page);
+        if (hasCaptcha) {
+          console.log('⚠️ Captcha detectado en la página! Reintentando...');
+          // En lugar de intentar resolver, simplemente reintentar con otro proxy
+          continue;
+        }
+
+        // Manejar cookies con comportamiento humano
         await handleCookiesConsent(page);
 
-        // Esperar un tiempo antes de continuar
-        await sleep(4000);
+        // Esperar un tiempo aleatorio antes de continuar
+        await sleep(3000 + Math.random() * 2000);
 
         // Contar elementos antes del scroll
         console.log('Contando elementos antes del scroll:');
         const initialCount = await countVisibleElements(page);
 
-        // Realizar auto-scroll exhaustivo para cargar TODOS los elementos
+        // Realizar auto-scroll exhaustivo con comportamiento humano
         await exhaustiveScroll(page);
+
+        // Verificar si apareció un captcha durante el scroll
+        const captchaAfterScroll = await detectCaptcha(page);
+        if (captchaAfterScroll) {
+          console.log('⚠️ Captcha detectado después del scroll! Reintentando...');
+          continue;
+        }
 
         // Esperar más tiempo después del scroll para observación
         await sleep(6000);
@@ -489,7 +654,7 @@ async function scrapeMilanuncios(searchParams = {}) {
         console.log(`Incremento de elementos: ${finalCount - initialCount} (${initialCount} -> ${finalCount})`);
 
         // Esperar un poco después del auto-scroll
-        await sleep(4000);
+        await sleep(3000 + Math.random() * 2000);
 
         // Extraer los datos de manera exhaustiva
         console.log('Iniciando extracción de datos...');
@@ -498,6 +663,13 @@ async function scrapeMilanuncios(searchParams = {}) {
         // Verificar si hubo error en la extracción
         if (scrapedData && scrapedData.error) {
           console.log(`Error en la extracción: ${scrapedData.error}`);
+
+          // Verificar si el error puede ser por un captcha
+          const captchaAfterExtract = await detectCaptcha(page);
+          if (captchaAfterExtract) {
+            console.log('⚠️ Captcha detectado después de extraer! Reintentando...');
+            continue;
+          }
 
           // Si estamos en el último intento, devolver lo que tengamos
           if (attempt === maxRetries) {
