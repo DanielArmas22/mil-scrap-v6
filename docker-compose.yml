@@ -34,6 +34,7 @@ services:
       - PORT=3000 # Puerto interno donde escucha tu aplicación
       # URL de Browserless para conectarse (nombre del servicio + puerto interno)
       - BROWSERLESS_URL=ws://chrome:3000?token=S0G1V9NnysIfNo6b4594f2f03360c5cb9faececf54
+      - BROWSERLESS_TOKEN=S0G1V9NnysIfNo6b4594f2f03360c5cb9faececf54 # Token de autenticación
     restart: unless-stopped
     # Esto permite a ambos contenedores encontrarse en la misma red
     depends_on:

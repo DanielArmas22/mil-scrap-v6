@@ -16,6 +16,7 @@ RUN npm install puppeteer-core puppeteer-extra puppeteer-extra-plugin-stealth ax
 # Copiar los archivos de la aplicación
 COPY server.js ./
 COPY scrap.js ./
+COPY captchaSolver.js ./
 
 # Exponer el puerto que usa Express
 EXPOSE 3000

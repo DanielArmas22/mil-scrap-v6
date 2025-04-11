@@ -2,11 +2,33 @@
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
+const fs = require('fs');
+const path = require('path');
+
+// Importamos la función para resolver captchas
+const { solveCaptcha } = require('./captchaSolver');
+
+
 // Función de delay con variación para parecer más humano
 function sleep(ms) {
   const jitter = Math.floor(Math.random() * 100);
   return new Promise(resolve => setTimeout(resolve, ms + jitter));
 }
+
+// Función para añadir agentes de usuario aleatorios
+function getRandomUserAgent() {
+  const userAgents = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.2045.60',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/118.0',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 OPR/102.0.0.0'
+  ];
+
+  return userAgents[Math.floor(Math.random() * userAgents.length)];
+}
+
 // Auto-scroll exhaustivo para cargar todos los elementos
 async function exhaustiveScroll(page) {
   console.log('Iniciando scroll exhaustivo para cargar todos los elementos...');
@@ -332,21 +354,25 @@ async function extractData(page) {
   }
 }
 
-// Función principal de scraping mejorada con extracción exhaustiva
+// Función principal de scraping mejorada con extracción exhaustiva y manejo de captchas
 async function scrapeMilanuncios(searchParams = {}) {
   const urlToScrape = buildUrl(searchParams);
   console.log(`Scraping URL: ${urlToScrape}`);
 
+  console.log('Esperando 5 segundos para que el entorno gráfico se estabilice...');
+  await sleep(5000);
+
   let browser = null;
-  let maxRetries = 2;
+  let maxRetries = 3; // Aumentamos el número de reintentos
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       if (attempt > 0) {
         console.log(`\n=== Intento ${attempt} de ${maxRetries} ===\n`);
+        await sleep(5000);
       }
 
-      // URL de Browserless desde variable de entorno o usar localhost por defecto
+      // Configuración básica para el navegador
       const browserWSEndpoint = process.env.BROWSERLESS_URL || 'ws://chrome:3000';
       console.log(`Conectando a Browserless en: ${browserWSEndpoint}`);
 
@@ -361,19 +387,19 @@ async function scrapeMilanuncios(searchParams = {}) {
         args: [`--window-name="MilAnuncios-Scraper-${Date.now()}"`]
       });
 
-      // Crear una nueva página
+      console.log('Creando nueva página...');
       const page = await browser.newPage();
 
-      // Configurar tiempos de espera más altos
+      // Configurar timeouts altos para evitar problemas
       page.setDefaultNavigationTimeout(60000);
       page.setDefaultTimeout(30000);
 
-      // Configurar user agent - usamos un iPhone para evitar bloqueos
+      // Configurar user agent aleatorio
       const userAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
       console.log(`Usando User-Agent: ${userAgent}`);
       await page.setUserAgent(userAgent);
 
-      // Configurar cabeceras HTTP adicionales
+      // Configurar cabeceras HTTP adicionales para parecer más humano
       await page.setExtraHTTPHeaders({
         'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
@@ -381,49 +407,13 @@ async function scrapeMilanuncios(searchParams = {}) {
         'Pragma': 'no-cache'
       });
 
-      // Establecer cookies iniciales para evitar algunas detecciones
-      await page.setCookie({
-        name: 'visited_before',
-        value: 'true',
-        domain: '.milanuncios.com',
-        path: '/',
-        expires: Math.floor(Date.now() / 1000) + 86400
-      });
-
-      // Configurar interceptación de peticiones para bloquear recursos innecesarios
-      await page.setRequestInterception(true);
-
-      page.on('request', (request) => {
-        const url = request.url();
-        const resourceType = request.resourceType();
-
-        // Bloquear recursos que no son necesarios para la extracción
-        if (
-          (resourceType === 'image' && !url.includes('milanuncios.com')) ||
-          resourceType === 'media' ||
-          url.includes('google-analytics') ||
-          url.includes('facebook.net') ||
-          url.includes('doubleclick.net') ||
-          url.includes('amazon-adsystem') ||
-          url.includes('/ads/') ||
-          url.includes('analytics') ||
-          url.includes('tracker')
-        ) {
-          request.abort();
-        } else {
-          request.continue();
-        }
-      });
-
-      // Navegar a la página con tiempos de carga extendidos
+      // Navegar a la URL
       console.log('Navegando a la URL...');
-
       await page.goto(urlToScrape, {
         waitUntil: 'networkidle2',
         timeout: 60000
       });
-
-      console.log('Página cargada.');
+      console.log('Página cargada correctamente.');
 
       // Manejar cookies
       await handleCookiesConsent(page);
@@ -431,23 +421,114 @@ async function scrapeMilanuncios(searchParams = {}) {
       // Esperar un tiempo antes de continuar
       await sleep(2000);
 
+      // Verificar si hay captcha
+      console.log('Comprobando si hay captcha o verificación de seguridad...');
+
+
+      // Comprobar si hay elementos visibles que indican resultados
+      const initialResults = await page.evaluate(() => {
+        return document.querySelectorAll('article, .ma-AdCardV2, [class*="result"], [class*="listing"]').length;
+      }).catch(() => 0);
+
+      console.log(`Elementos de resultados visibles inicialmente: ${initialResults}`);
+
+      // Si no hay resultados visibles, puede ser un captcha o bloqueo
+      if (initialResults < 3) {
+        console.log('Pocos o ningún resultado visible, verificando captcha...');
+
+        // Intentar resolver el captcha
+        const captchaResolved = await solveCaptcha(page);
+
+        if (captchaResolved) {
+          console.log('¡Captcha resuelto exitosamente!');
+
+          // Esperar para que la página se actualice después de resolver el captcha
+          await sleep(3000);
+        } else {
+          console.log('No se detectó captcha específico o no se pudo resolver. Intentando estrategias alternativas...');
+
+          // Estrategia 1: Buscar y hacer clic en cualquier botón que parezca de verificación
+          const buttons = await page.$$('button, [role="button"], [class*="button"], [class*="btn"]');
+          if (buttons.length > 0) {
+            console.log(`Encontrados ${buttons.length} posibles botones de verificación`);
+
+            // Intenta hacer clic en botones que parecen de verificación
+            for (const button of buttons.slice(0, 3)) { // limitar a los primeros 3
+              try {
+                const buttonText = await page.evaluate(el => el.innerText.toLowerCase(), button)
+                  .catch(() => '');
+
+                if (buttonText.includes('click') || buttonText.includes('continue') ||
+                  buttonText.includes('start') || buttonText.includes('verify') ||
+                  buttonText.includes('haz clic') || buttonText.includes('continuar') ||
+                  buttonText.includes('comenzar') || buttonText.includes('verificar')) {
+
+                  console.log(`Haciendo clic en botón con texto: ${buttonText}`);
+                  await button.click();
+                  await sleep(2000);
+                  break;
+                }
+              } catch (e) {
+                console.log('Error al procesar botón:', e.message);
+              }
+            }
+          }
+
+          // Estrategia 2: Si después de los clics aún no hay resultados, recargar la página
+          const resultsAfterClicks = await page.evaluate(() => {
+            return document.querySelectorAll('article, .ma-AdCardV2').length;
+          }).catch(() => 0);
+
+          if (resultsAfterClicks < 3) {
+            console.log('Aún sin resultados suficientes. Recargando la página...');
+            await page.reload({ waitUntil: 'networkidle2', timeout: 60000 });
+            await sleep(3000);
+
+            // Manejar cookies nuevamente después de recargar
+            await handleCookiesConsent(page);
+          }
+        }
+      }
+
       // Contar elementos antes del scroll
       console.log('Contando elementos antes del scroll:');
       const initialCount = await countVisibleElements(page);
 
-      // Realizar auto-scroll exhaustivo para cargar TODOS los elementos
+      // Si todavía no hay elementos después de todo, intentar una última estrategia
+      if (initialCount < 3) {
+        console.log('Pocos resultados detectados. Intentando una última estrategia de recuperación...');
+
+        // Tomar captura del estado actual
+
+
+        // Cerrar el navegador y lanzar un nuevo intento
+        if (browser) {
+          await page.close();
+          await browser.disconnect();
+          browser = null;
+        }
+
+        // Si no es el último intento, continuar con el siguiente
+        if (attempt < maxRetries) {
+          console.log('Reiniciando el navegador para un nuevo intento limpio...');
+          continue;
+        } else {
+          throw new Error('No se pudieron obtener resultados después de múltiples intentos');
+        }
+      }
+
+      // Realizar auto-scroll para cargar todos los elementos
       await exhaustiveScroll(page);
 
       // Contar elementos después del scroll
       console.log('Contando elementos después del scroll:');
       const finalCount = await countVisibleElements(page);
-
       console.log(`Incremento de elementos: ${finalCount - initialCount} (${initialCount} -> ${finalCount})`);
 
       // Esperar un poco después del auto-scroll
       await sleep(3000);
 
-      // Extraer los datos de manera exhaustiva
+      // Extraer los datos
       const scrapedData = await extractData(page);
 
       // Verificar si hubo error en la extracción
@@ -469,31 +550,41 @@ async function scrapeMilanuncios(searchParams = {}) {
 
         // Si no es el último intento, cerrar y reintentar
         console.log('Preparando para reintentar...');
-        await page.close();
-        await browser.disconnect();
+        await browser.close();
         browser = null;
         continue;
+      }
+
+      // Verificar si obtuvimos datos vacíos, lo que indicaría un problema
+      if (Array.isArray(scrapedData) && scrapedData.length === 0 && finalCount > 3) {
+        console.log('Se detectaron elementos en la página pero no se pudo extraer ningún dato. Posible cambio en la estructura del DOM.');
+
+
+        if (attempt < maxRetries) {
+          console.log('Intentando de nuevo con otra estrategia...');
+          await browser.close();
+          browser = null;
+          continue;
+        }
       }
 
       // Si llegamos aquí, la extracción fue exitosa
       console.log(`Extracción completada. Se extrajeron ${Array.isArray(scrapedData) ? scrapedData.length : 0} artículos.`);
 
-      // Cerrar página y desconectar del navegador
-      await page.close();
-      await browser.disconnect();
+      // Cerrar navegador y devolver datos
+      await browser.close();
       browser = null;
-
       return Array.isArray(scrapedData) ? scrapedData : [];
 
     } catch (error) {
       console.error(`Error en scraping (intento ${attempt + 1}/${maxRetries + 1}):`, error.message);
 
-      // Desconectar del navegador si sigue conectado
+      // Cerrar el navegador si sigue abierto
       if (browser) {
         try {
-          await browser.disconnect();
-        } catch (disconnectError) {
-          console.error('Error al desconectar del navegador:', disconnectError.message);
+          await browser.close();
+        } catch (closeError) {
+          console.error('Error al cerrar el navegador:', closeError.message);
         }
         browser = null;
       }
@@ -504,7 +595,7 @@ async function scrapeMilanuncios(searchParams = {}) {
       }
 
       // Esperar antes de reintentar
-      const retryDelay = (attempt + 1) * 5000; // Incrementar tiempo entre reintentos
+      const retryDelay = (attempt + 1) * 8000;
       console.log(`Esperando ${retryDelay / 1000} segundos antes de reintentar...`);
       await sleep(retryDelay);
     }
